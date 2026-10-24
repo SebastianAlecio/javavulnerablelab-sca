@@ -1,0 +1,15 @@
+mysql-data/
+target/
+*.war
+*.class
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Tarea_SCA_DependencyCheck.pdf
+evidencias/
+informe/
+reportes-locales/
+dependency-check-report.*
+dependency-check-data/
+.env
