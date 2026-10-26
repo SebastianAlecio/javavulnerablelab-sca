@@ -29,7 +29,7 @@ jobs: # lista de trabajos del workflow
           cache: maven # guarda en caché las dependencias de Maven entre ejecuciones
 
       - name: Restaurar la base del NVD desde la caché # paso: evita bajar toda la base cada vez
-        uses: actions/cache@v4 # acción oficial de caché
+        uses: actions/cache/restore@v4 # solo restaura, el guardado va aparte para que ocurra aunque el análisis falle
         with: # parámetros de la caché
           path: ~/.m2/repository/org/owasp # carpeta donde el plugin guarda la base del NVD
           key: nvd-db-${{ github.run_id }} # clave única por ejecución, para poder guardar la base actualizada
@@ -45,12 +45,19 @@ jobs: # lista de trabajos del workflow
           sarif_file: target/dependency-check-report.sarif # archivo SARIF generado por Dependency-Check
           category: dependency-check # categoría con la que aparece en Code scanning
 
+      - name: Guardar la base del NVD en la caché # paso: actualizar la caché para la próxima ejecución
+        if: always() # se guarda aunque el análisis falle por severidad
+        uses: actions/cache/save@v4 # guarda la caché sin depender de que el trabajo termine bien
+        with: # parámetros de la acción
+          path: ~/.m2/repository/org/owasp # misma carpeta donde el plugin guarda la base del NVD
+          key: nvd-db-${{ github.run_id }} # clave única por ejecución, igual que al restaurar
+
       - name: Guardar los reportes HTML y XML # paso: dejarlos descargables
         if: always() # se guardan aunque el análisis falle
         uses: actions/upload-artifact@v4 # acción oficial para subir artefactos
         with: # parámetros de la acción
           name: dependency-check-reportes # nombre del artefacto en la pestaña Actions
-          path: target/dependency-check-report.{html,xml} # reportes HTML y XML (el patrón cubre ambos)
+          path: target/dependency-check-report.*ml # reportes HTML y XML (el patrón .*ml cubre solo esos dos)
 
   sbom: # trabajo 2 (extra): genera el SBOM CycloneDX
     runs-on: ubuntu-latest # máquina virtual Linux de GitHub
