@@ -1,0 +1,75 @@
+name: SCA - Dependency-Check # nombre que se ve en la pestaña Actions
+
+on: # eventos que disparan el workflow
+  push: # al hacer push...
+    branches: [main] # ...a la rama main
+  pull_request: # al abrir o actualizar un pull request...
+    branches: [main] # ...que apunte a main
+  workflow_dispatch: # permite lanzarlo a mano desde la pestaña Actions
+
+permissions: # permisos mínimos del GITHUB_TOKEN
+  contents: read # solo lectura del código (para el checkout)
+  security-events: write # necesario para subir el SARIF a Security > Code scanning
+
+jobs: # lista de trabajos del workflow
+  dependency-check: # trabajo 1: análisis SCA con Dependency-Check
+    runs-on: ubuntu-latest # máquina virtual Linux de GitHub
+    timeout-minutes: 120 # la primera descarga del NVD es lenta, así que damos margen
+    env: # variables de entorno para todos los pasos del trabajo
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }} # clave del NVD tomada del secreto, nunca escrita en el YAML
+    steps: # pasos del trabajo, en orden
+      - name: Descargar el código # paso: traer el repositorio a la máquina
+        uses: actions/checkout@v4 # acción oficial para clonar el repo
+
+      - name: Preparar Java 17 # paso: instalar el JDK que pide el lab
+        uses: actions/setup-java@v4 # acción oficial para configurar Java
+        with: # parámetros de la acción
+          distribution: temurin # distribución Eclipse Temurin del JDK
+          java-version: '17' # versión 17 de Java
+          cache: maven # guarda en caché las dependencias de Maven entre ejecuciones
+
+      - name: Restaurar la base del NVD desde la caché # paso: evita bajar toda la base cada vez
+        uses: actions/cache@v4 # acción oficial de caché
+        with: # parámetros de la caché
+          path: ~/.m2/repository/org/owasp # carpeta donde el plugin guarda la base del NVD
+          key: nvd-db-${{ github.run_id }} # clave única por ejecución, para poder guardar la base actualizada
+          restore-keys: nvd-db- # si no hay clave exacta, restaura la caché más reciente que empiece así
+
+      - name: Ejecutar Dependency-Check # paso: el análisis SCA
+        run: mvn -B org.owasp:dependency-check-maven:13.0.0:check -Dformat=ALL -DnvdApiKey=$NVD_API_KEY -DossindexAnalyzerEnabled=false -DfailBuildOnCVSS=10 # genera HTML, XML, JSON y SARIF, y falla si hay un CVSS de 10 (Log4Shell)
+
+      - name: Subir el SARIF a Code scanning # paso: publicar resultados en la pestaña Security
+        if: always() # se ejecuta aunque el análisis falle por severidad
+        uses: github/codeql-action/upload-sarif@v3 # acción que carga un SARIF de cualquier herramienta
+        with: # parámetros de la acción
+          sarif_file: target/dependency-check-report.sarif # archivo SARIF generado por Dependency-Check
+          category: dependency-check # categoría con la que aparece en Code scanning
+
+      - name: Guardar los reportes HTML y XML # paso: dejarlos descargables
+        if: always() # se guardan aunque el análisis falle
+        uses: actions/upload-artifact@v4 # acción oficial para subir artefactos
+        with: # parámetros de la acción
+          name: dependency-check-reportes # nombre del artefacto en la pestaña Actions
+          path: target/dependency-check-report.{html,xml} # reportes HTML y XML (el patrón cubre ambos)
+
+  sbom: # trabajo 2 (extra): genera el SBOM CycloneDX
+    runs-on: ubuntu-latest # máquina virtual Linux de GitHub
+    steps: # pasos del trabajo, en orden
+      - name: Descargar el código # paso: traer el repositorio a la máquina
+        uses: actions/checkout@v4 # acción oficial para clonar el repo
+
+      - name: Preparar Java 17 # paso: instalar el JDK
+        uses: actions/setup-java@v4 # acción oficial para configurar Java
+        with: # parámetros de la acción
+          distribution: temurin # distribución Eclipse Temurin del JDK
+          java-version: '17' # versión 17 de Java
+          cache: maven # caché de dependencias de Maven
+
+      - name: Generar el SBOM CycloneDX # paso: crear bom.json
+        run: mvn -B org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom -DoutputFormat=json -DoutputName=bom # SBOM en JSON dentro de target/
+
+      - name: Guardar el SBOM como artefacto # paso: dejarlo descargable
+        uses: actions/upload-artifact@v4 # acción oficial para subir artefactos
+        with: # parámetros de la acción
+          name: sbom-cyclonedx # nombre del artefacto en la pestaña Actions
+          path: target/bom.json # archivo SBOM generado
